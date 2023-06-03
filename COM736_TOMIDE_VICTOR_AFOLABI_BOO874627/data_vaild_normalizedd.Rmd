@@ -1,0 +1,346 @@
+---
+title: "Data validation on normalized data"
+author: "Tomide Victor Afolabi,  B00874627"
+date: "2023-05-07"
+output:
+  html_document: default
+  pdf_document: default
+---
+STEP 1. NORMALIZING THE DATA
+``` {r}
+for_norm<-read.csv("clean_norm_aibl.csv", stringsAsFactors = FALSE)
+head(for_norm)
+
+
+# Using min max scaling
+library(caret)
+process <- preProcess(as.data.frame(for_norm), method=c("range"))
+
+norm_data<- predict(process, as.data.frame(for_norm))
+head(norm_data)
+
+
+
+```
+
+Step 2: DATA VISUALIZATION FOR OUTLIERS
+``` {r}
+boxplot(norm_data)
+```
+STEP 3.OUTLIERS REPLACEMENT.
+
+``` {r}
+y <- 0
+repeat {
+  # code to execute
+  # Since there are outliers, let replace with mean
+  remove_outliers <- function(x, na.rm = TRUE) {
+    q1 <- quantile(x, probs = 0.25, na.rm = na.rm)
+    q3 <- quantile(x, probs = 0.75, na.rm = na.rm)
+    iqr <- q3 - q1
+    low_cutoff <- q1 - 1.5 * iqr
+    high_cutoff <- q3 + 1.5 * iqr
+    x[x < low_cutoff | x > high_cutoff] <- NA
+    return(x)
+  }
+  
+  # applying the function
+  for (col in names(norm_data)) {
+    norm_data[[col]] <- remove_outliers(norm_data[[col]])
+  }
+  
+  
+  ## checking if outliers exist with NA
+  colSums(is.na(norm_data))
+  
+  
+  ## replacing NA (Outliers) with mean
+  for(i in 1:ncol(norm_data)) {                                   # Replace NA in all columns
+    norm_data[ , i][is.na(norm_data[ , i])] <- mean(norm_data[ , i], na.rm = TRUE)
+  }
+  
+  ## checking if outliers exist with NA
+  colSums(is.na(norm_data))
+  
+  
+  
+  boxplot(norm_data)
+  
+  sapply(norm_data, class) # UNDERSTAND CLASS
+  dim(norm_data) # checking the dimensions of the dataframe
+  names(norm_data) #list of variable names
+  norm_data
+  y <- y + 1
+  if (y == 6) {
+    break
+  }
+}
+
+
+
+
+```
+
+
+STEP 4. FEATURE IMPAORTANCE
+``` {r}
+library(caTools)
+
+library("DALEX")
+library("randomForest")
+set.seed(22)
+
+split = sample.split(norm_data$Diagnosis, SplitRatio = 0.7)
+train_data = subset(norm_data, split == TRUE)
+test_data = subset(norm_data, split == FALSE)
+train_data$Diagnosis <- as.numeric(train_data$Diagnosis)
+
+dim(train_data)
+dim(test_data)
+
+datclean_rf <- randomForest(Diagnosis ~ ., data = train_data, mtree = 500)
+
+test_data$Diagnosis <- as.integer(test_data$Diagnosis)
+
+explain_rf <-DALEX::explain(model = datclean_rf,
+                              data =test_data[,-31],
+                              y=test_data$Diagnosis,
+                              label ="Random Forest")
+
+loss_root_mean_square(observed = test_data$Diagnosis,
+                      predicted = predict(datclean_rf,test_data))
+
+
+#multiple permutation-based variable-importance with plots.
+set.seed(22)
+(vip.50 <- model_parts(explainer = explain_rf,
+            loss_function = loss_root_mean_square, B = 50))
+library("ggplot2")
+plot(vip.50)+ggtitle("Mean variable-importance over 50 permutations","")
+
+
+
+```
+
+
+
+
+
+STEP 4. FEATURE SELECTION USING BORUTA
+``` {r}
+library(corrplot)
+
+
+# Correlation can be computed between numerical variables only and so appropriate coerce non-numerical variables.
+norm_data$Diagnosis <- as.numeric(norm_data$Diagnosis) 
+
+correlations <- cor(norm_data)
+corrplot(correlations, number.cex = .9, method = "circle", type = "full", tl.cex=0.8,tl.col = "black")
+         
+#Make sure that the predicted (or class) variable  is set to factor type. 
+
+train_data$Diagnosis <- as.factor(train_data$Diagnosis)
+
+
+library("Boruta")
+set.seed(22)
+Boruta.data <- Boruta(Diagnosis ~ ., data = train_data, doTrace = 2, ntree = 500)
+
+#Plot the importance of the attributes.
+plot(Boruta.data)
+#One can see that Z score of the most important shadow attribute clearly separates important and non important attributes.
+
+#Confirming the tentative attributes, if some remained tentative in the initial round.
+Boruta.data.final<-TentativeRoughFix(Boruta.data)
+
+
+plot(Boruta.data.final)
+
+
+attStats(Boruta.data.final)
+```
+
+
+
+
+STEP 6. FILTERING THE CONFIRMED FEATURES
+``` {r}
+chosen_feat <- c(1,2, 11, 15:18)
+
+boruta_norm_data <- norm_data[, chosen_feat]
+boruta_norm_data[8] <- norm_data[31]
+
+
+```
+
+STEP 7.  BALACING DATA
+``` {r}
+library(ROCR)
+library(e1071)
+library(kernlab)
+# library(caret)
+library(MLmetrics)
+library(caTools)
+library(ggplot2)
+set.seed(22)
+
+# the type of data
+str(train_data)
+table(train_data$Diagnosis)
+ g <- ggplot(data= train_data) 
+  print( g+geom_bar(aes(x= Diagnosis, fill = Diagnosis)) +
+  theme(legend.position = "top"))
+  table(train_data[31])
+
+#Carry out class balancing.
+# install.packages('smotefamily')
+library(smotefamily)
+trainbal_data <- SMOTE(train_data[-31],  # feature values
+              (train_data$Diagnosis),  # class labels
+              K = 3, dup_size = 1)  # function parameters
+table(trainbal_data$data[31]) # Getting Diagnosis not class attribute (parameter) from smote
+
+# Not balanced but the different is not too much
+
+# Plotting the graph of semi balanced training ata
+trainbal_data <- trainbal_data$data
+trainbal_data$Diagnosis <- trainbal_data$class
+trainbal_data <- trainbal_data[-31] # Removing class
+
+ g <- ggplot(data= trainbal_data) 
+  print( g+geom_bar(aes(x= Diagnosis, fill = Diagnosis)) +
+  theme(legend.position = "top"))
+  table(trainbal_data[31])
+  
+
+```
+STEP 8.   DATA TRANSFORMATION   (FOR HMT102)
+``` {r}
+###  For HMT102
+set.seed(22)
+boruta_norm_data$Diagnosis <- as.numeric(boruta_norm_data$Diagnosis)
+
+hist(boruta_norm_data$HMT102,freq=FALSE, main ="Density Plot of HMT102 with outliers", xlab="HMT102") #Weakly skewed to the right
+lines(density(boruta_norm_data$HMT102))
+
+
+cor(boruta_norm_data$HMT102, boruta_norm_data$Diagnosis)# with r =  -0.06579622, it is not symmetric given the number of features at 31, expected value is above 0.949 
+
+skewness(boruta_norm_data$HMT102)## checking the skewness: -0.04863484 skewness, it is approximately symmetric
+
+### Apply statistical test to confirm data normality. 
+shapiro.test(boruta_norm_data$HMT102)
+# with p value to be  2.117e-05, it is not symmetric
+
+library(MASS)
+
+# Obtain Box Cox plot to find an appropriate lambda value.
+par(mfrow = c(1,1))
+boxcox(boruta_norm_data$HMT102~1,plotit=TRUE,lambda = seq(-1.5, 5, 0.01))
+title(main="Box-Cox Plot") # lambda
+
+
+skewness(boruta_norm_data$HMT102^2.1)## checking the skewness and applying lambda: with -0.0004573834 skewness, it has improved the skeness. Much more symeterical.
+
+shapiro.test(boruta_norm_data$HMT102^1.1)  ## Checking shapiro test
+#Normality check:, p-value = 2.658e-05which is still less that 0.05, it is still not symmetric
+
+cor(boruta_norm_data$HMT102^1.1, boruta_norm_data$Diagnosis) # with r = -0.06665577, it is still not symmetric given the number of features at 7, expected value is above 0.889 
+
+
+hist(boruta_norm_data$HMT102^1.1,freq=FALSE, main ="Density Plot of NEW HMT102 with outliers", xlab="NEW HMT102") #right skewed
+lines(density(boruta_norm_data$HMT102^2.1))
+
+```
+DATA TRANSFORMATION   (FOR MMSCORE)
+``` {r}
+###  For MM SCORE
+set.seed(22)
+boruta_norm_data$Diagnosis <- as.numeric(boruta_norm_data$Diagnosis)
+
+hist(boruta_norm_data$MMSCORE,freq=FALSE, main ="Density Plot of MMSCORE with outliers", xlab="MMSCORE") #Weakly skewed to the right
+lines(density(boruta_norm_data$MMSCORE))
+
+
+
+cor(boruta_norm_data$MMSCORE, boruta_norm_data$Diagnosis) # with r =  -0.2699581, it is not symmetric given the number of features at 31, expected value is above 0.949 
+
+skewness(boruta_norm_data$MMSCORE)## checking the skewness: -0.2302581 skewness, it is approximately symmetric
+
+### Apply statistical test to confirm data normality. 
+shapiro.test(boruta_norm_data$MMSCORE)
+# with p value to be  2.2e-16, it is not symmetric
+
+library(MASS)
+
+# Obtain Box Cox plot to find an appropriate lambda value.
+par(mfrow = c(1,1))
+boxcox(boruta_norm_data$MMSCORE~1,plotit=TRUE,lambda = seq(-1.5, 5, 0.01))
+title(main="Box-Cox Plot") # lambda
+
+
+skewness(boruta_norm_data$MMSCORE^4.2)## checking the skewness and applying lambda: with -0.03970163 skewness, it has improved the skeness. Much more symeterical.
+
+shapiro.test(boruta_norm_data$MMSCORE^4.2)  ## Checking shapiro test
+#Normality check:, p-value = 2.2e-16 Which is still less that 0.05, it is still not symmetric
+
+cor(boruta_norm_data$MMSCORE^4.2, boruta_norm_data$Diagnosis) # with r = -0.2805724, it is still not symmetric given the number of features at 7, expected value is above 0.889 
+
+
+hist(boruta_norm_data$MMSCORE^4.2,freq=FALSE, main ="Density Plot of NEW MMSCORE", xlab="NEW MMSCORE") #right skewed
+lines(density(boruta_norm_data$MMSCORE^4.2))
+
+```
+
+STEP 9.    MODELLING THE BORUTA DATA NORMALIZED
+
+``` {r}
+
+head(boruta_norm_data)
+set.seed(22)
+boruta_norm_data$Diagnosis <- as.factor(boruta_norm_data$Diagnosis)
+split = sample.split(boruta_norm_data$Diagnosis, SplitRatio = 0.7)
+train_boruta = subset(boruta_norm_data, split == TRUE)
+test_boruta = subset(boruta_norm_data, split == FALSE)
+
+library(randomForest)
+
+rf<-randomForest(Diagnosis~.,data=train_boruta, mtry=4, importance=TRUE,ntree=502)
+
+#testing the model
+y_pred_norm = predict(rf, newdata = test_boruta)
+
+# evaluting the model
+#library(caret)
+#library(MLmetrics)
+# Making the Confusion Matrix
+(cm_boruta_norm= confusionMatrix(y_pred_norm, test_boruta$Diagnosis))
+
+
+
+
+#Predict and Calculate Performance Metrics.
+library(ROCR)
+perf_rf= prediction(as.numeric(y_pred_norm), test_boruta$Diagnosis)
+
+# 0. Accuracy.
+(acc_unnorm = performance(perf_rf, "acc"))
+
+
+plot(acc_unnorm,main="Accurcay Curve for Random Forest",col=2,lwd=2)
+
+
+
+# 1. Area under curve
+auc_norm= performance(perf_rf, "auc")
+auc_norm@y.values[[1]]
+
+
+#Plotting auc
+norm_auc_plot = performance(perf_rf, "tpr", "fpr")
+
+plot(norm_auc_plot,main="Normalized ROC Curve for Random Forest",col=3,lwd=3)
+abline(a=0,b=1,lwd=2,lty=3,col="gray")
+
+# save_boruta_aibl <- write.csv(boruta_norm_data, "boruta_norm_aibl.csv", row.names = FALSE)
+```

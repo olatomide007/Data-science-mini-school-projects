@@ -1,0 +1,597 @@
+---
+title: "Data validation on unnormalized data"
+author: "Tomide Victor Afolabi,  B00874627"
+date: "2023-05-07"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+Step 1: DATA READING AND MERGING
+A. Getting ldr score from neurobat 
+``` {r}
+
+library(tidyverse) # Package for data wrangling
+neurobat<-read.csv("aibl_neurobat_01-Jun-2018.csv", stringsAsFactors = FALSE)
+
+logicScore <- neurobat %>% filter(VISCODE =="bl")
+
+ldr_scores <- logicScore[c(5,6)]
+
+head(ldr_scores)
+
+```
+
+B. Getting Diagnosis the target variable
+``` {r}
+pdxconv<-read.csv("aibl_pdxconv_01-Jun-2018.csv", stringsAsFactors = FALSE)
+
+pdc <- pdxconv %>% filter(VISCODE =="bl")
+
+clinical_diagnosis <- pdc[c(4)]
+
+head(clinical_diagnosis)
+```
+
+C. Getting mmse score
+``` {r}
+mmse<-read.csv("aibl_mmse_01-Jun-2018.csv", stringsAsFactors = FALSE)
+
+mmse <-  mmse%>% filter( VISCODE == "bl")
+mmse_scores <- mmse[c(5)]
+head(mmse_scores)
+```
+
+d. getting cdr scrores
+``` {r}
+cdr<- read.csv("aibl_cdr_01-Jun-2018.csv", stringsAsFactors = FALSE)
+cdr <-  cdr%>% filter( VISCODE == "bl")
+cdr_scores <- cdr[c(5)]
+head(cdr_scores)
+
+```
+
+E. Getting blood group
+``` {r}
+labdata<-read.csv("aibl_labdata_01-Jun-2018.csv", stringsAsFactors = FALSE)
+labdata_bi <-  labdata %>% filter( VISCODE == "bl")
+bloodgroup <- labdata_bi[c(-1, -2, -3)]
+head(bloodgroup)
+
+```
+F. Getting genotype
+``` {r}
+apoeres<-read.csv("aibl_apoeres_01-Jun-2018.csv", stringsAsFactors = FALSE)
+genotype <- apoeres[c(5,6)]
+head(genotype)
+```
+G. Getting medical history
+``` {r}
+medhist<-read.csv("aibl_medhist_01-Jun-2018.csv", stringsAsFactors = FALSE)
+medical_history <- medhist[c(-2, -3)]
+medical_history
+```
+
+H. Getting gender and date of birth
+```{r}
+
+
+ptdemog<-read.csv("aibl_ptdemog_01-Jun-2018.csv", stringsAsFactors = FALSE)
+gender_dob <- ptdemog[c(1,4,5)]
+
+```
+
+step 2: DATA MERGING
+```{r}
+
+#Bringing the files together
+
+library("dplyr")
+
+#Merging the datasets
+aibl_total<-cbind.data.frame(cdr_scores,genotype,bloodgroup, clinical_diagnosis, mmse_scores, ldr_scores, clinical_diagnosis, medical_history, gender_dob)
+
+
+head (aibl_total) # Getting the first 6 rows of the data
+
+sapply(aibl_total, class) # Getting values class of all variables
+dim(aibl_total) # checking the dimensions of the dataframe
+names(aibl_total) #list of variable names
+
+save_unclean_aibl <- write.csv(aibl_total, "unclean_aibl.csv", row.names = FALSE)
+```
+Step 3: DATA CLEANING
+
+```{r}
+set.seed(22)
+#############     CLEANING FOR IRRELEVANT FEATURES
+
+#####    Removing irrelevant features: SITEID, EXAMDATE, APTESTDT 
+data_unclean <- aibl_total
+
+data_unclean <-data_unclean[, c(-20, -21, -32 )]
+names(data_unclean)
+
+
+##########  CLEANING   FOR DIAGNOSIS
+
+#####    Repositioning and changing DXCURREN to Diagnosis
+diagnosis_ind <- which(names(data_unclean) == "DXCURREN") # initially DXCURREN
+data_unclean <- cbind(data_unclean[,-diagnosis_ind], data_unclean[, diagnosis_ind]) # Removing and adding DXCURREN to the last position.
+colnames(data_unclean)[which(names(data_unclean) == "data_unclean[, diagnosis_ind]")] <- "Diagnosis" # Changing to diagnosis.
+head(data_unclean) #printing the first 6 row of the data
+
+# using logistic to make Diagnosis category of HC (Health Control) = 0 and NonHC (Non Health Control) = 1
+for (i in 1:nrow(data_unclean)) {
+  if (data_unclean$Diagnosis[i] == 1) {
+    data_unclean$Diagnosis[i] = 0
+  } else {
+    data_unclean$Diagnosis[i] = 1
+  }
+}
+
+head(data_unclean)
+
+
+
+##################   DATA CLEANING FOR AGE
+#  Removing the / from DOB values
+data_unclean$PTDOB <- gsub("/", "", data_unclean$PTDOB)
+head(data_unclean)
+
+
+# Changing the date to Age and calculate for real age values
+data_unclean$PTDOB <- as.integer(data_unclean$PTDOB)
+colnames(data_unclean)[which(names(data_unclean) == "PTDOB")] <- "Age"
+data_unclean$Age <- 2023 - data_unclean$Age
+head(data_unclean)
+
+
+############   CLEANING FOR NULL AND NEGATIVE VALUES
+## Checking for null values
+colSums(is.na(data_unclean))
+
+
+##### Removing negative values as they can affect the outcome of the research negatively
+
+## firstly, assigning negative values to NA
+data_unclean[data_unclean < 0] <- NA
+
+## checking variables with negative values but now NA
+colSums(is.na(data_unclean))
+
+## replacing NA with mean
+for(i in 1:ncol(data_unclean)) {                                   # Replace NA in all columns
+  data_unclean[ , i][is.na(data_unclean[ , i])] <- mean(data_unclean[ , i], na.rm = TRUE)
+}
+
+## checking variables with negative values after removing with mean
+colSums(is.na(data_unclean))
+
+## Checking the structure the data
+str(data_unclean)
+
+##### We can see that the data is having values in integer
+
+(clean_data <- data_unclean)
+sapply(clean_data, class) # UNDERSTAND CLASS
+dim(clean_data) # checking the dimensions of the dataframe
+names(clean_data) #list of variable names
+summary(clean_data)
+
+###################   CLEANING DATA SAVED FOR NORMALIZED DATASET 
+#  save_clean_for_norm <- write.csv(clean_data, "clean_norm_aibl.csv", row.names = FALSE)
+```
+STEP 4.   DATA TRANSFORMATION  (For HMT102)
+``` {r}
+library(e1071)
+###  For HMT102
+set.seed(22)
+clean_data$Diagnosis <- as.numeric(clean_data$Diagnosis)
+head(clean_data)
+
+hist(clean_data$HMT102,freq=FALSE, main ="Density Plot of HMT102 with outliers", xlab="HMT102") #Weakly skewed to the right
+lines(density(clean_data$HMT102))
+
+
+cor(clean_data$HMT102, clean_data$Diagnosis)# with r =  -0.06579622, it is not symmetric given the number of features at 31, expected value is above 0.949 
+
+skewness(clean_data$HMT102)## checking the skewness: -0.04863484 skewness, it is approximately symmetric
+
+### Apply statistical test to confirm data normality. 
+shapiro.test(clean_data$HMT102)
+# with p value to be  2.117e-05, it is not symmetric
+
+library(MASS)
+
+# Obtain Box Cox plot to find an appropriate lambda value.
+par(mfrow = c(1,1))
+boxcox(clean_data$HMT102~1,plotit=TRUE,lambda = seq(-1.5, 5, 0.01))
+title(main="Box-Cox Plot") # lambda
+
+
+skewness(clean_data$HMT102^2.1)## checking the skewness and applying lambda: with -0.0004573834 skewness, it has improved the skeness. Much more symeterical.
+
+shapiro.test(clean_data$HMT102^2.1)  ## Checking shapiro test
+#Normality check:, p-value = 2.658e-05which is still less that 0.05, it is still not symmetric
+
+cor(clean_data$HMT102^2.1, clean_data$Diagnosis) # with r = -0.06665577, it is still not symmetric given the number of features at 7, expected value is above 0.889 
+
+
+hist(clean_data$HMT102^2.1,freq=FALSE, main ="Density Plot of NEW HMT102 with outliers", xlab="NEW HMT102") #right skewed
+lines(density(clean_data$HMT102^2.1))
+
+```
+
+
+Step 5: DATA VISUALIZATION FOR OUTLIERS
+``` {r}
+boxplot(clean_data)
+```
+STEP 6: Outliers replacement. the below chunks of code need to run three times to replace outliers
+
+``` {r}
+y <- 0
+repeat {
+  
+  # Since there are outliers, let replace with mean
+  remove_outliers <- function(x, na.rm = TRUE) {  # function to calculate replace outliers to NA
+    q1 <- quantile(x, probs = 0.25, na.rm = na.rm)
+    q3 <- quantile(x, probs = 0.75, na.rm = na.rm)
+    iqr <- q3 - q1
+    low_cutoff <- q1 - 1.5 * iqr
+    high_cutoff <- q3 + 1.5 * iqr
+    x[x < low_cutoff | x > high_cutoff] <- NA
+    return(x)
+  }
+  
+  # applying the function
+  for (col in names(clean_data)) {
+    clean_data[[col]] <- remove_outliers(clean_data[[col]])
+  }
+  
+  
+  ## checking if outliers exist with NA
+  colSums(is.na(clean_data))
+  
+  
+  ## replacing NA (Outliers) with mean
+  # Replace NA in all columns with mean
+  for(i in 1:ncol(clean_data)) {  
+    clean_data[ , i][is.na(clean_data[ , i])] <- mean(clean_data[ , i], na.rm = TRUE)
+  }
+  
+  ## checking if outliers exist with NA
+  colSums(is.na(clean_data))
+  
+  
+  
+  boxplot(clean_data) # plotting boxplot
+  
+  sapply(clean_data, class) # UNDERSTAND CLASS
+  dim(clean_data) # checking the dimensions of the dataframe
+  names(clean_data) #list of variable names
+  clean_data
+  y <- y + 1
+  if (y > 11) {
+    break
+  }
+}
+
+
+
+
+```
+
+
+STEP 8: FEATURE IMPAORTANCE
+``` {r}
+library(caTools)
+
+library("DALEX")
+library("randomForest")
+set.seed(22)
+
+split = sample.split(clean_data$Diagnosis, SplitRatio = 0.7)  #Getting splitting ratio
+train_data = subset(clean_data, split == TRUE) # Getting training data
+test_data = subset(clean_data, split == FALSE) # Getting testing dta
+train_data$Diagnosis <- as.numeric(train_data$Diagnosis) # Making training Diagnosis to be integer
+
+dim(train_data) # Finding the dimension of training data
+dim(test_data)  # Finding the dimension of testing data
+
+datclean_rf <- randomForest(Diagnosis ~ ., data = train_data, mtree = 500) # Modeling for mean importance
+
+test_data$Diagnosis <- as.numeric(test_data$Diagnosis) # Making testing Diagnosis to be integer
+
+explain_rf <-DALEX::explain(model = datclean_rf,      # Getting randon forest explainer
+                              data =test_data[,-31],  # Getting the explanatory variable of test data
+                              y=test_data$Diagnosis,   # Getting dependent variable of test data
+                              label ="Random Forest")
+
+loss_root_mean_square(observed = test_data$Diagnosis,  # Getting loss root mean square
+                      predicted = predict(datclean_rf,test_data))
+
+
+#multiple permutation-based variable-importance with plots.
+set.seed(22)
+(vip.50 <- model_parts(explainer = explain_rf,
+            loss_function = loss_root_mean_square, B = 50))
+library("ggplot2")
+plot(vip.50)+ggtitle("Mean variable-importance over 50 permutations","")
+
+
+
+
+
+```
+STEP 9  FEATURE SELECTION USING BORUTA
+``` {r}
+library(corrplot)
+
+
+# Correlation can be computed between numerical variables only and so appropriate coerce non-numerical variables.
+clean_data$Diagnosis <- as.numeric(clean_data$Diagnosis) 
+
+correlations <- cor(clean_data)
+corrplot(correlations, number.cex = .9, method = "circle", type = "full", tl.cex=0.8,tl.col = "black")
+         
+#Make sure that the predicted (or class) variable  is set to factor type. 
+
+train_data$Diagnosis <- as.factor(train_data$Diagnosis)
+
+
+
+library("Boruta")
+set.seed(22)
+Boruta.data <- Boruta(Diagnosis ~ ., data = train_data, doTrace = 2, ntree = 500)
+
+#Plot the importance of the attributes.
+plot(Boruta.data)
+#One can see that Z score of the most important shadow attribute clearly separates important and non important attributes.
+
+#Confirming the tentative attributes, if some remained tentative in the initial round.
+Boruta.data.final<-TentativeRoughFix(Boruta.data)
+
+
+plot(Boruta.data.final)
+
+
+attStats(Boruta.data.final)
+```
+FILTERING THE CONFIRMED FEATURES
+``` {r}
+chosen_feat <- c(1,2, 11, 16:18)  # Getting index of selected features
+
+boruta_clean_data <- clean_data[, chosen_feat]  # Getting  feature that are important accrding to boruta
+boruta_clean_data[7] <- clean_data[31] # Adding Diagnosis
+
+```
+
+
+STEP 10
+BALACING DATA
+``` {r}
+library(ROCR)
+library(e1071)
+library(kernlab)
+# library(caret)
+library(MLmetrics)
+library(caTools)
+library(ggplot2)
+set.seed(22)
+
+# the type of data
+str(train_data)
+table(train_data$Diagnosis)
+
+# Getting plot on unbalanced train data
+g <- ggplot(data= train_data) 
+  print( g+geom_bar(aes(x= Diagnosis, fill = Diagnosis)) +
+  theme(legend.position = "top"))
+  table(train_data[31])
+
+#Carry out class balancing.
+# install.packages('smotefamily')
+library(smotefamily)
+trainbal_data <- SMOTE(train_data[-31],  # feature values
+              (train_data$Diagnosis),  # class labels
+              K = 3, dup_size = 1)  # function parameters
+table(trainbal_data$data[31]) # Getting Diagnosis not class attribute (parameter) from smote
+
+# Not balanced but the different is not too much
+
+# Plotting the graph of semi balanced training ata
+trainbal_data <- trainbal_data$data
+trainbal_data$Diagnosis <- trainbal_data$class
+trainbal_data <- trainbal_data[-31] # Removing class
+
+
+# Getting plot on balanced train data
+ g <- ggplot(data= trainbal_data) 
+  print( g+geom_bar(aes(x= Diagnosis, fill = Diagnosis)) +
+  theme(legend.position = "top"))
+  table(trainbal_data[31])
+  
+
+```
+For HMT102
+``` {r}
+###  For HMT102
+set.seed(22)
+boruta_clean_data$Diagnosis <- as.numeric(boruta_clean_data$Diagnosis)
+head(boruta_clean_data)
+
+hist(boruta_clean_data$HMT102,freq=FALSE, main ="Density Plot of HMT102 with outliers", xlab="HMT102") #Weakly skewed to the right
+lines(density(boruta_clean_data$HMT102))
+
+
+cor(boruta_clean_data$HMT102, boruta_clean_data$Diagnosis)# with r =  -0.06579622, it is not symmetric given the number of features at 31, expected value is above 0.949 
+
+skewness(boruta_clean_data$HMT102)## checking the skewness: -0.04863484 skewness, it is approximately symmetric
+
+### Apply statistical test to confirm data normality. 
+shapiro.test(boruta_clean_data$HMT102)
+# with p value to be  2.117e-05, it is not symmetric
+
+library(MASS)
+
+# Obtain Box Cox plot to find an appropriate lambda value.
+par(mfrow = c(1,1))
+boxcox(boruta_clean_data$HMT102~1,plotit=TRUE,lambda = seq(-1.5, 5, 0.01))
+title(main="Box-Cox Plot") # lambda
+
+
+skewness(boruta_clean_data$HMT102^2.1)## checking the skewness and applying lambda: with -0.0004573834 skewness, it has improved the skeness. Much more symeterical.
+
+shapiro.test(boruta_clean_data$HMT102^2.1)  ## Checking shapiro test
+#Normality check:, p-value = 2.658e-05which is still less that 0.05, it is still not symmetric
+
+cor(boruta_clean_data$HMT102^2.1, boruta_clean_data$Diagnosis) # with r = -0.06665577, it is still not symmetric given the number of features at 7, expected value is above 0.889 
+
+
+hist(boruta_clean_data$HMT102^2.1,freq=FALSE, main ="Density Plot of NEW HMT102 with outliers", xlab="NEW HMT102") #right skewed
+lines(density(boruta_clean_data$HMT102^2.1))
+
+```
+FOR MMSCORE
+``` {r}
+###  For HMT102
+set.seed(22)
+boruta_clean_data$Diagnosis <- as.numeric(boruta_clean_data$Diagnosis)
+
+hist(boruta_clean_data$MMSCORE,freq=FALSE, main ="Density Plot of HMT102 with outliers", xlab="HMT102") #Weakly skewed to the right
+lines(density(boruta_clean_data$MMSCORE))
+
+cor(boruta_clean_data$MMSCORE, boruta_clean_data$Diagnosis)
+length(boruta_clean_data$MMSCORE)# with r =  -0.2699581, it is not symmetric given the number of observations at 862, expected value is above much more greater
+
+skewness(boruta_clean_data$MMSCORE)## checking the skewness: -0.2302581 skewness, it is approximately symmetric
+
+### Apply statistical test to confirm data normality. 
+shapiro.test(boruta_clean_data$MMSCORE)
+# with p value to be  2.2e-16, it is not symmetric
+
+library(MASS)
+
+# Obtain Box Cox plot to find an appropriate lambda value.
+par(mfrow = c(1,1))
+boxcox(boruta_clean_data$MMSCORE~1,plotit=TRUE,lambda = seq(-1.5, 5, 0.01))
+title(main="Box-Cox Plot") # lambda
+
+
+skewness(boruta_clean_data$MMSCORE^4.2)## checking the skewness and applying lambda: with -0.03970163 skewness, it has improved the skeness. Much more symeterical.
+
+shapiro.test(boruta_clean_data$MMSCORE^4.2)  ## Checking shapiro test
+#Normality check:, p-value = 2.2e-16 Which is still less that 0.05, it is still not symmetric
+
+cor(boruta_clean_data$MMSCORE^4.2, boruta_clean_data$Diagnosis)
+length(boruta_clean_data$MMSCORE^4.2)      # with r = -0.2805724, it is still not symmetric given the number of features at 7, expected value is above 0.889 
+
+
+hist(boruta_clean_data$MMSCORE^4.2,freq=FALSE, main ="Density Plot of NEW HMT102 with outliers", xlab="NEW HMT102") #right skewed
+lines(density(boruta_clean_data$MMSCORE^4.2))
+
+```
+
+FOR CDGLOBAL
+``` {r}
+
+###  For HMT102
+set.seed(22)
+boruta_clean_data$Diagnosis <- as.numeric(boruta_clean_data$Diagnosis)
+boruta_clean_data$CDGLOBAL <- boruta_clean_data$CDGLOBAL +1
+
+hist(boruta_clean_data$CDGLOBAL,freq=FALSE, main ="Density Plot of HMT102 with outliers", xlab="HMT102") #Weakly skewed to the right
+
+lines(density(boruta_clean_data$CDGLOBAL))
+
+cor(boruta_clean_data$CDGLOBAL, boruta_clean_data$Diagnosis) # with r =  -0.06579622, it is not symmetric given the number of features at 31, expected value is above 0.949
+
+skewness(boruta_clean_data$CDGLOBAL)## checking the skewness: -0.04863484 skewness, it is approximately symmetric
+
+### Apply statistical test to confirm data normality.
+shapiro.test(boruta_clean_data$CDGLOBAL)
+# with p value to be  2.117e-05, it is not symmetric
+
+library(MASS)
+
+# Obtain Box Cox plot to find an appropriate lambda value.
+par(mfrow = c(1,1))
+boxcox(boruta_clean_data$CDGLOBAL~1,plotit=TRUE,lambda = seq(-1.5, 5, 0.01))
+title(main="Box-Cox Plot") # lambda
+
+
+skewness(log(boruta_clean_data$CDGLOBAL))## checking the skewness and applying lambda: with -0.0004573834 skewness, it has improved the skeness. Much more symeterical.
+
+shapiro.test(log(boruta_clean_data$CDGLOBAL))  ## Checking shapiro test
+#Normality check:, p-value = 2.658e-05which is still less that 0.05, it is still not symmetric
+
+cor(log(boruta_clean_data$CDGLOBAL), boruta_clean_data$Diagnosis) # with r = -0.06665577, it is still not symmetric given the number of features at 7, expected value is above 0.889
+
+
+hist(log(boruta_clean_data$CDGLOBAL),freq=FALSE, main ="Density Plot of NEW HMT102 with outliers", xlab="NEW HMT102") #right skewed
+lines(density(log(boruta_clean_data$CDGLOBAL)))
+
+```
+
+STEP 10:  MODELLING THE BORUTA DATA THAT IS NOT NORMALIZED
+
+``` {r}
+set.seed(22)
+
+boruta_clean_data$Diagnosis <- as.factor(boruta_clean_data$Diagnosis)
+
+split = sample.split(boruta_clean_data$Diagnosis, SplitRatio = 0.7) # Getting splitting ratio
+train_boruta = subset(boruta_clean_data, split == TRUE) # Getting training boruta data
+test_boruta = subset(boruta_clean_data, split == FALSE)# Getting testing boruta data
+
+#library(randomForest)
+set.seed(123)
+rf<-randomForest(Diagnosis~.,data=train_boruta, mtry=4, importance=TRUE,ntree=502) # training the model
+
+#testing the model
+y_pred_unnorm = predict(rf, newdata = test_boruta) 
+
+
+
+
+###################Evaluting the model
+library(caret)
+# library(MLmetrics)
+
+
+
+
+#  the Confusion Matrix
+(cm_boruta_unnorm= confusionMatrix(y_pred_unnorm, test_boruta$Diagnosis))
+
+
+
+
+#Predict and Calculate Performance Metrics.
+library(ROCR)
+perf_rf= prediction(as.numeric(y_pred_unnorm), test_boruta$Diagnosis)
+
+# 0. Accuracy.
+(acc_unnorm = performance(perf_rf, "acc"))
+
+
+plot(acc_unnorm,main="Accurcay Curve for Random Forest",col=2,lwd=2)
+
+
+
+# 1. Area under curve
+auc_unnorm= performance(perf_rf, "auc")
+auc_unnorm@y.values[[1]]
+
+
+#Plotting auc
+unnorm_auc_plot = performance(perf_rf, "tpr", "fpr")
+
+plot(unnorm_auc_plot,main="Unnormalized ROC Curve for Random Forest",col=3,lwd=3)
+abline(a=0,b=1,lwd=2,lty=3,col="gray")
+
+# save_boruta_aibl <- write.csv(boruta_clean_data, "boruta_unnorm_aibl.csv", row.names = FALSE)
+```
